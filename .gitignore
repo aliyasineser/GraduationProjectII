@@ -101,11 +101,9 @@ ENV/
 .mypy_cache/
 
 #pycharm
-.idea/Aruco_Tracker.iml
-.idea/misc.xml
-.idea/modules.xml
-.idea/workspace.xml
-.idea
+.idea/*
+.idea/
+
 
 #YasinSpecial
 ./hw2.py
