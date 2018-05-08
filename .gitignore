@@ -102,9 +102,9 @@ ENV/
 
 #pycharm
 .idea/*
-.idea/
 
 
 #YasinSpecial
 ./hw2.py
 calib_images/*
+.idea/
