@@ -5,10 +5,6 @@ import glob
 import argparse
 
 cap = cv2.VideoCapture(1)
-markerTvecList = []
-markerRvecList = []
-pointCircle = None
-fL = None
 
 
 class Namespace:
@@ -93,28 +89,39 @@ def inversePerspectiveWithTransformMatrix(tvec, rvec):
     # return
     return _tvec, _rvec
 
-def composeTransform(rvec1, tvec1, rvec2, tvec2):
-    # Sum of the translation and multiplication of the rotation will give the composed vectors
-    firstRvecSquareMatrix, _ = cv2.Rodrigues(rvec1)
-    secondRvecSquareMatrix, _ = cv2.Rodrigues(rvec2)
 
-    tvec3 = tvec1 + tvec2
-    rvec3 = firstRvecSquareMatrix * secondRvecSquareMatrix
-    rvec3, _ = cv2.Rodrigues(rvec3)
-    return rvec3, tvec3
-
-
-def inversePerspective(tvec, rvec):
+def inversePerspective(rvec, tvec):
     R, _ = cv2.Rodrigues(rvec)
     R = np.matrix(R).T
-    invTvec = -R * np.matrix(tvec)
+    invTvec = np.dot(-R, np.matrix(tvec))
     invRvec, _ = cv2.Rodrigues(R)
-    return invTvec, invRvec
+    return invRvec, invTvec
+
+
+def relativePosition(rvec1, tvec1, rvec2, tvec2):
+    rvec1, tvec1 = rvec1.reshape((3, 1)), tvec1.reshape(
+        (3, 1))
+    rvec2, tvec2 = rvec2.reshape((3, 1)), tvec2.reshape((3, 1))
+
+    # Inverse the second marker, the right one in the image
+    invRvec, invTvec = inversePerspective(rvec2, tvec2)
+
+    print(invRvec, invTvec, "\n and \n", inversePerspective(invRvec, invTvec))
+
+    info = cv2.composeRT(rvec1, tvec1, invRvec, invTvec)
+    composedRvec, composedTvec = info[0], info[1]
+
+    composedRvec = composedRvec.reshape((3, 1))
+    composedTvec = composedTvec.reshape((3, 1))
+
+    return composedRvec, composedTvec
 
 
 def track(matrix_coefficients, distortion_coefficients):
     pointCircle = (0, 0)
-
+    markerTvecList = []
+    markerRvecList = []
+    pointCircle = None
     while True:
         ret, frame = cap.read()
         # operations on the frame come here
@@ -139,16 +146,11 @@ def track(matrix_coefficients, distortion_coefficients):
                                                                            distortion_coefficients)
                 # print(markerPoints)
                 (rvec - tvec).any()  # get rid of that nasty numpy value array error
-                markerTvecList.append(tvec)
                 markerRvecList.append(rvec)
+                markerTvecList.append(tvec)
 
-                objectPositions = np.array([(0, 0, 0)], dtype=np.float)
-                imgpts, jac = cv2.projectPoints(objectPositions, rvec, tvec, matrix_coefficients,
-                                                distortion_coefficients)
-
-                aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
+                # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
                 cv2.circle(frame, pointCircle, 6, (255, 0, 255), 3)
-                # cv2.circle(frame, (int(imgpts[0][0][0]), int(imgpts[0][0][1])), 6, (255, 0, 255), 3)
                 aruco.drawDetectedMarkers(frame, corners)  # Draw A square around the markers
 
             if len(ids) > 1:  # If there are two markers, reverse the second and get the difference
@@ -156,15 +158,20 @@ def track(matrix_coefficients, distortion_coefficients):
                     (3, 1))
                 markerRvecList[1], markerTvecList[1] = markerRvecList[1].reshape((3, 1)), markerTvecList[1].reshape((3, 1))
 
-                # Inverse the second marker, the right one in the image
-                invTvec, invRvec = inversePerspective(markerTvecList[1], markerRvecList[1])
+                composedRvec, composedTvec = relativePosition(markerRvecList[0], markerTvecList[0], markerRvecList[1], markerTvecList[1])
+                # debug: get the relative again so you can be sure about you are doing it right!
+                TcomposedRvec, TcomposedTvec = relativePosition(markerRvecList[1], markerTvecList[1], composedRvec, composedTvec)
+                # print("first: ", markerRvecList[0], markerTvecList[0])  # first marker vectors
+                # print("second: ", markerRvecList[1], markerTvecList[1])  # second marker vectors
+                # print("composed: ", composedRvec, composedTvec)  # relative marker vectors
+                # print("test: ", TcomposedRvec, TcomposedTvec)  # second relative marker vectors, should be equal to first or second
+                aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, TcomposedRvec, TcomposedTvec, 0.01)  # Draw Axis for second relative!
 
-                info = cv2.composeRT(markerRvecList[0], markerTvecList[0], invRvec, invTvec)
-                composedRvec, composedTvec = info[0], info[1]
-                print(composedRvec, composedTvec)
                 objectPositions = np.array([(0, 0, 0)], dtype=np.float)  # 3D point for projection
-                # Get projected point and draw a circle
-                imgpts, jac = cv2.projectPoints(objectPositions, markerRvecList[0] * composedRvec, markerTvecList[0] + composedTvec, matrix_coefficients, distortion_coefficients)
+
+                composedRvecToPrint = np.dot(markerRvecList[1], composedRvec.T)
+                composedRvecToPrint, _ = cv2.Rodrigues(composedRvecToPrint)
+                imgpts, jac = cv2.projectPoints(objectPositions, composedRvecToPrint, markerTvecList[1] + composedTvec, matrix_coefficients, distortion_coefficients)
 
                 # print(int(first[0][0][0]), int(first[0][0][1]), int(second[0][0][0]), int(second[0][0][1]))
                 # pointCircle a global variable to store circle position to draw in every frame.
@@ -178,26 +185,7 @@ def track(matrix_coefficients, distortion_coefficients):
         if key == ord('q'):  # Quit
             break
         elif key == ord('c'):  # Calibration
-            if len(ids) > 1:  # If there are two markers, reverse the second and get the difference
-                markerRvecList[0], markerTvecList[0] = markerRvecList[0].reshape((3, 1)), markerTvecList[0].reshape(
-                    (3, 1))
-                markerRvecList[1], markerTvecList[1] = markerRvecList[1].reshape((3, 1)), markerTvecList[1].reshape((3, 1))
-
-                # Inverse the second marker, the right one in the image
-                invTvec, invRvec = inversePerspective(markerTvecList[1], markerRvecList[1])
-
-                info = cv2.composeRT(markerRvecList[0], markerTvecList[0], invRvec, invTvec)
-                composedRvec, composedTvec = info[0], info[1]
-                # print(composedRvec, composedTvec)
-                objectPositions = np.array([(0, 0, 0)], dtype=np.float)  # 3D point for projection
-                # Get projected point and draw a circle
-                imgpts, jac = cv2.projectPoints(objectPositions, markerRvecList[0] * composedRvec, markerTvecList[0] - composedTvec, matrix_coefficients, distortion_coefficients)
-
-                # print(int(first[0][0][0]), int(first[0][0][1]), int(second[0][0][0]), int(second[0][0][1]))
-                # pointCircle a global variable to store circle position to draw in every frame.
-                pointCircle = (int(imgpts[0][0][0]), int(imgpts[0][0][1]))
-                cv2.circle(frame, pointCircle, 6, (255, 0, 255), 3)
-
+            break
     # When everything done, release the capture
     cap.release()
     cv2.destroyAllWindows()
