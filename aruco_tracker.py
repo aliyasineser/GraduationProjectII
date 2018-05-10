@@ -136,11 +136,12 @@ def draw(img, corners, imgpts):
 
 
 def track(matrix_coefficients, distortion_coefficients):
-    pointCircle = (0, 0)
     markerTvecList = []
     markerRvecList = []
     composedRvec, composedTvec = None, None
     while True:
+        firstDetected = False
+        secondDetected = False
         ret, frame = cap.read()
         # operations on the frame come here
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Change grayscale
@@ -167,28 +168,25 @@ def track(matrix_coefficients, distortion_coefficients):
                 if ids[i] == firstMarkerID:
                     firstRvec = rvec
                     firstTvec = tvec
+                    firstDetected = True
                 elif ids[i] == secondMarkerID:
                     secondRvec = rvec
                     secondTvec = tvec
+                    secondDetected = True
 
                 (rvec - tvec).any()  # get rid of that nasty numpy value array error
                 markerRvecList.append(rvec)
                 markerTvecList.append(tvec)
 
                 # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
-                # cv2.circle(frame, pointCircle, 6, (255, 0, 255), 3)
                 aruco.drawDetectedMarkers(frame, corners)  # Draw A square around the markers
 
-            if composedRvec is not None and composedTvec is not None:
-                info = cv2.composeRT(composedRvec, composedTvec, markerRvecList[0].T, markerTvecList[0].T)
+            if secondDetected and composedRvec is not None and composedTvec is not None:
+                info = cv2.composeRT(composedRvec, composedTvec, secondRvec.T, secondTvec.T)
                 TcomposedRvec, TcomposedTvec = info[0], info[1]
-
                 imgpts, jac = cv2.projectPoints(axis, TcomposedRvec, TcomposedTvec, matrix_coefficients,
                                                 distortion_coefficients)
-
                 frame = draw(frame, corners[0], imgpts)
-
-
 
         # Display the resulting frame
         cv2.imshow('frame', frame)
@@ -198,11 +196,10 @@ def track(matrix_coefficients, distortion_coefficients):
             break
         elif key == ord('c'):  # Calibration
             if len(ids) > 1:  # If there are two markers, reverse the second and get the difference
-                markerRvecList[0], markerTvecList[0] = markerRvecList[0].reshape((3, 1)), markerTvecList[0].reshape(
-                    (3, 1))
-                markerRvecList[1], markerTvecList[1] = markerRvecList[1].reshape((3, 1)), markerTvecList[1].reshape((3, 1))
+                firstRvec, firstTvec = firstRvec.reshape((3, 1)), firstTvec.reshape((3, 1))
+                secondRvec, secondTvec = secondRvec.reshape((3, 1)), secondTvec.reshape((3, 1))
 
-                composedRvec, composedTvec = relativePosition(markerRvecList[0], markerTvecList[0], markerRvecList[1], markerTvecList[1])
+                composedRvec, composedTvec = relativePosition(firstRvec, firstTvec, secondRvec, secondTvec)
                 # debug: get the relative again so you can be sure about you are doing it right!
                 # info = cv2.composeRT(composedRvec, composedTvec, markerRvecList[1], markerTvecList[1])
                 # TcomposedRvec, TcomposedTvec = info[0], info[1]
@@ -211,8 +208,6 @@ def track(matrix_coefficients, distortion_coefficients):
                 # print("composed: ", composedRvec, composedTvec)  # relative marker vectors
                 # print("test: ", TcomposedRvec, TcomposedTvec)  # second relative marker vectors, should be equal to first or second
                 # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, TcomposedRvec, TcomposedTvec, 0.01)  # Draw Axis for second relative!
-
-
 
     # When everything done, release the capture
     cap.release()
