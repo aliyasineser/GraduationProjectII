@@ -4,6 +4,14 @@ import cv2.aruco as aruco
 import glob
 import argparse
 
+firstMarkerID = None
+secondMarkerID = None
+firstRvec = None
+secondRvec = None
+firstTvec = None
+secondTvec = None
+
+
 cap = cv2.VideoCapture(1)
 
 # termination criteria
@@ -155,7 +163,14 @@ def track(matrix_coefficients, distortion_coefficients):
                 # Estimate pose of each marker and return the values rvec and tvec---different from camera coefficients
                 rvec, tvec, markerPoints = aruco.estimatePoseSingleMarkers(corners[i], 0.02, matrix_coefficients,
                                                                            distortion_coefficients)
-                # print(markerPoints)
+
+                if ids[i] == firstMarkerID:
+                    firstRvec = rvec
+                    firstTvec = tvec
+                elif ids[i] == secondMarkerID:
+                    secondRvec = rvec
+                    secondTvec = tvec
+
                 (rvec - tvec).any()  # get rid of that nasty numpy value array error
                 markerRvecList.append(rvec)
                 markerTvecList.append(tvec)
@@ -168,13 +183,10 @@ def track(matrix_coefficients, distortion_coefficients):
                 info = cv2.composeRT(composedRvec, composedTvec, markerRvecList[0].T, markerTvecList[0].T)
                 TcomposedRvec, TcomposedTvec = info[0], info[1]
 
-                objectPositions = np.array([(0, 0, 0)], dtype=np.float)  # 3D point for projection
                 imgpts, jac = cv2.projectPoints(axis, TcomposedRvec, TcomposedTvec, matrix_coefficients,
                                                 distortion_coefficients)
-                # print(imgpts)
+
                 frame = draw(frame, corners[0], imgpts)
-                # relativePoint = (int(imgpts[0][0][0]), int(imgpts[0][0][1]))
-                # cv2.circle(frame, relativePoint, 2, (255, 255, 0))
 
 
 
@@ -211,7 +223,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Aruco Marker Tracking')
     parser.add_argument('--coefficients', metavar='bool', required=True,
                         help='File name for matrix coefficients and distortion coefficients')
+    parser.add_argument('--firstMarker', metavar='int', required=True,
+                        help='First Marker ID')
+    parser.add_argument('--secondMarker', metavar='int', required=True,
+                        help='Second Marker ID')
     args = parser.parse_args()
+    firstMarkerID = int(args.firstMarker)
+    secondMarkerID = int(args.secondMarker)
     if args.coefficients == '1':
         mtx, dist = loadCoefficients()
         ret = True
