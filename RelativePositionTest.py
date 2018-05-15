@@ -164,15 +164,17 @@ def track(matrix_coefficients, distortion_coefficients):
                 # cv2.circle(frame, pointCircle, 6, (255, 0, 255), 3)
                 aruco.drawDetectedMarkers(frame, corners)  # Draw A square around the markers
 
-            if composedRvec is not None and composedTvec is not None:
-                info = cv2.composeRT(composedRvec, composedTvec, markerRvecList[0].T, markerTvecList[0].T)
+            if len(ids) > 1 and composedRvec is not None and composedTvec is not None:
+                info = cv2.composeRT(composedRvec, composedTvec, markerRvecList[1].T, markerTvecList[1].T)
                 TcomposedRvec, TcomposedTvec = info[0], info[1]
 
                 objectPositions = np.array([(0, 0, 0)], dtype=np.float)  # 3D point for projection
                 imgpts, jac = cv2.projectPoints(axis, TcomposedRvec, TcomposedTvec, matrix_coefficients,
                                                 distortion_coefficients)
                 # print(imgpts)
-                frame = draw(frame, corners[0], imgpts)
+                # frame = draw(frame, corners[0], imgpts)
+                aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, TcomposedRvec, TcomposedTvec,
+                               0.01)  # Draw Axis
                 # relativePoint = (int(imgpts[0][0][0]), int(imgpts[0][0][1]))
                 # cv2.circle(frame, relativePoint, 2, (255, 255, 0))
 

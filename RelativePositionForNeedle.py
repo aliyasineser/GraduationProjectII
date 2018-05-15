@@ -4,16 +4,6 @@ import cv2.aruco as aruco
 import glob
 import argparse
 
-firstMarkerID = None
-secondMarkerID = None
-firstRvec = None
-secondRvec = None
-firstTvec = None
-secondTvec = None
-firstCorners = None
-secondCorners = None
-
-
 cap = cv2.VideoCapture(1)
 
 # termination criteria
@@ -102,7 +92,7 @@ def inversePerspectiveWithTransformMatrix(tvec, rvec):
 def inversePerspective(rvec, tvec):
     R, _ = cv2.Rodrigues(rvec)
     R = np.matrix(R).T
-    invTvec = np.dot(R, np.matrix(-tvec))
+    invTvec = np.dot(-R, np.matrix(tvec))
     invRvec, _ = cv2.Rodrigues(R)
     return invRvec, invTvec
 
@@ -126,25 +116,23 @@ def relativePosition(rvec1, tvec1, rvec2, tvec2):
     return composedRvec, composedTvec
 
 
-def draw(img, imgpts):
+def draw(img, corners, imgpts):
     imgpts = np.int32(imgpts).reshape(-1,2)
     # draw ground floor in green
     # img = cv2.drawContours(img, [imgpts[:4]],-1,(0,255,0),-3)
     # draw pillars in blue color
-    img = cv2.line(img, tuple(imgpts[0]), tuple(imgpts[1]),(200,200,220),3)
+    for i,j in zip(range(4),range(4)):
+        img = cv2.line(img, tuple(imgpts[i]), tuple(imgpts[j]),(255),3)
     # draw top layer in red color
     return img
 
 
 def track(matrix_coefficients, distortion_coefficients):
+    pointCircle = (0, 0)
     markerTvecList = []
     markerRvecList = []
-    composedRvec, composedTvec = None, None  # Composed
-    TcomposedRvec, TcomposedTvec = None, None  # Composed + second Marker
-    savedRvec, savedTvec = None, None  # Pure Composed
+    composedRvec, composedTvec = None, None
     while True:
-        firstDetected = False
-        secondDetected = False
         ret, frame = cap.read()
         # operations on the frame come here
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Change grayscale
@@ -162,39 +150,42 @@ def track(matrix_coefficients, distortion_coefficients):
             del markerRvecList[:]
             zipped = zip(ids, corners)
             ids, corners = zip(*(sorted(zipped)))
-            # axis = np.float32([[-0.01, -0.01, 0], [-0.01, 0.01, 0], [0.01, -0.01, 0], [0.01, 0.01, 0]]).reshape(-1, 3)
-            # axisForTwoPoints = np.float32([[0.01, 0.01, 0], [-0.01, 0.01, 0]]).reshape(-1, 3)
-            axisForTwoPoints = np.float32([[0, 0, 0], [0, 0.01, 0]]).reshape(-1, 3)
+            axis = np.float32([[-0.01, -0.01, 0], [-0.01, 0.01, 0], [0.01, -0.01, 0], [0.01, 0.01, 0]]).reshape(-1, 3)
             for i in range(0, len(ids)):  # Iterate in markers
                 # Estimate pose of each marker and return the values rvec and tvec---different from camera coefficients
                 rvec, tvec, markerPoints = aruco.estimatePoseSingleMarkers(corners[i], 0.02, matrix_coefficients,
                                                                            distortion_coefficients)
-
-                if ids[i] == firstMarkerID:
-                    firstRvec = rvec
-                    firstTvec = tvec
-                    firstDetected = True
-                    firstCorners = corners[i]
-                elif ids[i] == secondMarkerID:
-                    secondRvec = rvec
-                    secondTvec = tvec
-                    secondDetected = True
-                    secondCorners = corners[i]
-
+                # print(markerPoints)
                 (rvec - tvec).any()  # get rid of that nasty numpy value array error
                 markerRvecList.append(rvec)
                 markerTvecList.append(tvec)
 
                 # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
+                # cv2.circle(frame, pointCircle, 6, (255, 0, 255), 3)
                 aruco.drawDetectedMarkers(frame, corners)  # Draw A square around the markers
 
-            if secondDetected and composedRvec is not None and composedTvec is not None:
-                info = cv2.composeRT(composedRvec, composedTvec, secondRvec.T, secondTvec.T)
+            if len(ids) > 1:
+                print("in")
+                markerRvecList[0], markerTvecList[0] = markerRvecList[0].reshape((3, 1)), markerTvecList[0].reshape(
+                    (3, 1))
+                markerRvecList[1], markerTvecList[1] = markerRvecList[1].reshape((3, 1)), markerTvecList[1].reshape(
+                    (3, 1))
+                info = cv2.composeRT(markerRvecList[0], markerTvecList[0], markerRvecList[1], markerTvecList[1])
+                TTcomposedRvec, TTcomposedTvec = info[0], info[1]
+                aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, TTcomposedRvec, TTcomposedTvec,
+                               0.01)  # Draw Axis
+                print(TTcomposedRvec, TTcomposedTvec)
+
+            if len(ids) > 1 and composedRvec is not None and composedTvec is not None:
+                info = cv2.composeRT(composedRvec, composedTvec, markerRvecList[1].T, markerTvecList[1].T)
                 TcomposedRvec, TcomposedTvec = info[0], info[1]
-                imgpts, jac = cv2.projectPoints(axisForTwoPoints, TcomposedRvec, TcomposedTvec, matrix_coefficients,
+
+                objectPositions = np.array([(0, 0, 0)], dtype=np.float)  # 3D point for projection
+                imgpts, jac = cv2.projectPoints(axis, TcomposedRvec, TcomposedTvec, matrix_coefficients,
                                                 distortion_coefficients)
-                frame = draw(frame, imgpts)
-                # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, TcomposedRvec, TcomposedTvec, 0.01)  # Draw Axis
+                # print(imgpts)
+                # frame = draw(frame, corners[0], imgpts)
+
 
         # Display the resulting frame
         cv2.imshow('frame', frame)
@@ -204,8 +195,7 @@ def track(matrix_coefficients, distortion_coefficients):
             break
         elif key == ord('c'):  # Calibration
             if len(ids) > 1:  # If there are two markers, reverse the second and get the difference
-                composedRvec, composedTvec = relativePosition(firstRvec, firstTvec, secondRvec, secondTvec)
-                savedRvec, savedTvec = composedRvec, composedTvec
+                composedRvec, composedTvec = relativePosition(markerRvecList[0], markerTvecList[0], markerRvecList[1], markerTvecList[1])
                 # debug: get the relative again so you can be sure about you are doing it right!
                 # info = cv2.composeRT(composedRvec, composedTvec, markerRvecList[1], markerTvecList[1])
                 # TcomposedRvec, TcomposedTvec = info[0], info[1]
@@ -214,24 +204,6 @@ def track(matrix_coefficients, distortion_coefficients):
                 # print("composed: ", composedRvec, composedTvec)  # relative marker vectors
                 # print("test: ", TcomposedRvec, TcomposedTvec)  # second relative marker vectors, should be equal to first or second
                 # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, TcomposedRvec, TcomposedTvec, 0.01)  # Draw Axis for second relative!
-        elif key == ord('u'):
-            composedTvec = composedTvec + [[0], [0], [0.001]]
-        elif key == ord('d'):
-            composedTvec = composedTvec + [[0], [0], [-0.001]]
-        elif key == ord('r'):
-            composedTvec = composedTvec + [[0.001], [0], [0]]
-        elif key == ord('l'):
-            composedTvec = composedTvec + [[-0.001], [0], [0]]
-        elif key == ord('b'):
-            composedTvec = composedTvec + [[0], [-0.001], [0]]
-        elif key == ord('f'):
-            composedTvec = composedTvec + [[0], [0.001], [0]]
-        elif key == ord('p'):
-            print("composed vector to print")
-            print(composedTvec)
-            print("calculated vector to print")
-            print(savedTvec)
-
 
 
     # When everything done, release the capture
@@ -243,13 +215,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Aruco Marker Tracking')
     parser.add_argument('--coefficients', metavar='bool', required=True,
                         help='File name for matrix coefficients and distortion coefficients')
-    parser.add_argument('--firstMarker', metavar='int', required=True,
-                        help='First Marker ID')
-    parser.add_argument('--secondMarker', metavar='int', required=True,
-                        help='Second Marker ID')
     args = parser.parse_args()
-    firstMarkerID = int(args.firstMarker)
-    secondMarkerID = int(args.secondMarker)
     if args.coefficients == '1':
         mtx, dist = loadCoefficients()
         ret = True
