@@ -4,8 +4,17 @@ import cv2.aruco as aruco
 import glob
 import argparse
 
+# Marker id infos. Global to access everywhere. It is unnecessary to change it to local.
 calibrationMarkerID = None
 needleMarkerID = None
+ultraSoundMarkerID = None
+
+# Behaviour is a key between calibration types.
+# No simulation is equal to 0
+# Needle Calibration is equal to 1
+# Ultrasound Calibration is equal to 2
+# Press
+behaviour = 0
 
 cap = cv2.VideoCapture(1)
 
@@ -88,6 +97,7 @@ def inversePerspective(rvec, tvec):
 
 
 def relativePosition(rvec1, tvec1, rvec2, tvec2):
+    """ Get relative position for rvec2 & tvec2. Compose the returned rvec & tvec to use composeRT with rvec2 & tvec2 """
     rvec1, tvec1 = rvec1.reshape((3, 1)), tvec1.reshape((3, 1))
     rvec2, tvec2 = rvec2.reshape((3, 1)), tvec2.reshape((3, 1))
 
@@ -103,22 +113,22 @@ def relativePosition(rvec1, tvec1, rvec2, tvec2):
 
 
 def draw(img, imgpts):
+    """ draw a line between given two points. """
     imgpts = np.int32(imgpts).reshape(-1, 2)
-    # draw pillars in blue color
     img = cv2.line(img, tuple(imgpts[0]), tuple(imgpts[1]), (200, 200, 220), 3)
-    # draw top layer in red color
     return img
 
 
 def track(matrix_coefficients, distortion_coefficients):
-    markerTvecList = []
-    markerRvecList = []
-    needleComposeRvec, needleComposeTvec = None, None  # Composed
-    TcomposedRvec, TcomposedTvec = None, None  # Composed + second Marker
+    """ Real time ArUco marker tracking.  """
+    needleComposeRvec, needleComposeTvec = None, None  # Composed for needle
+    ultraSoundComposeRvec, ultraSoundComposeTvec = None, None  # Composed for ultrasound
     savedNeedleRvec, savedNeedleTvec = None, None  # Pure Composed
+    savedUltraSoundRvec, savedUltraSoundTvec = None, None  # Pure Composed
     while True:
         isCalibrationMarkerDetected = False
         isNeedleDetected = False
+        isUltraSoundDetected = False
         ret, frame = cap.read()
         # operations on the frame come here
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Change grayscale
@@ -132,11 +142,9 @@ def track(matrix_coefficients, distortion_coefficients):
                                                                 distCoeff=distortion_coefficients)
 
         if np.all(ids is not None):  # If there are markers found by detector
-            del markerTvecList[:]
-            del markerRvecList[:]
             zipped = zip(ids, corners)
             ids, corners = zip(*(sorted(zipped)))
-            # axis = np.float32([[-0.01, -0.01, 0], [-0.01, 0.01, 0], [0.01, -0.01, 0], [0.01, 0.01, 0]]).reshape(-1, 3)  # axis for a plane
+            axisForFourPoints = np.float32([[-0.01, -0.01, 0], [-0.01, 0.01, 0], [0.01, -0.01, 0], [0.01, 0.01, 0]]).reshape(-1, 3)  # axis for a plane
             axisForTwoPoints = np.float32([[0.01, 0.01, 0], [-0.01, 0.01, 0]]).reshape(-1, 3)  # axis for a line
             for i in range(0, len(ids)):  # Iterate in markers
                 # Estimate pose of each marker and return the values rvec and tvec---different from camera coefficients
@@ -153,11 +161,13 @@ def track(matrix_coefficients, distortion_coefficients):
                     needleTvec = tvec
                     isNeedleDetected = True
                     needleCorners = corners[i]
+                elif ids[i] == ultraSoundMarkerID:
+                    ultraSoundRvec = rvec
+                    ultraSoundTvec = tvec
+                    isUltraSoundDetected = True
+                    ultrasoundCorners = corners[i]
 
                 (rvec - tvec).any()  # get rid of that nasty numpy value array error
-                markerRvecList.append(rvec)
-                markerTvecList.append(tvec)
-
                 # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
                 aruco.drawDetectedMarkers(frame, corners)  # Draw A square around the markers
 
@@ -167,7 +177,13 @@ def track(matrix_coefficients, distortion_coefficients):
                 imgpts, jac = cv2.projectPoints(axisForTwoPoints, TcomposedRvec, TcomposedTvec, matrix_coefficients,
                                                 distortion_coefficients)
                 frame = draw(frame, imgpts)
-                # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, TcomposedRvec, TcomposedTvec, 0.01)  # Draw Axis
+
+            if isUltraSoundDetected and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None:
+                info = cv2.composeRT(ultraSoundComposeRvec, ultraSoundComposeTvec, ultraSoundRvec.T, ultraSoundTvec.T)
+                TcomposedRvec, TcomposedTvec = info[0], info[1]
+                imgpts, jac = cv2.projectPoints(axisForFourPoints, TcomposedRvec, TcomposedTvec, matrix_coefficients,
+                                                distortion_coefficients)
+                frame = draw(frame, imgpts)
 
         # Display the resulting frame
         cv2.imshow('frame', frame)
@@ -177,25 +193,44 @@ def track(matrix_coefficients, distortion_coefficients):
             break
         elif key == ord('c'):  # Calibration
             if len(ids) > 1:  # If there are two markers, reverse the second and get the difference
-                needleComposeRvec, needleComposeTvec = relativePosition(calibrationRvec, calibrationTvec, needleRvec, needleTvec)
-                savedNeedleRvec, savedNeedleTvec = needleComposeRvec, needleComposeTvec
-        elif key == ord('u'):
-            needleComposeTvec = needleComposeTvec + [[0], [0], [0.001]]
-        elif key == ord('d'):
-            needleComposeTvec = needleComposeTvec + [[0], [0], [-0.001]]
-        elif key == ord('r'):
-            needleComposeTvec = needleComposeTvec + [[0.001], [0], [0]]
-        elif key == ord('l'):
-            needleComposeTvec = needleComposeTvec + [[-0.001], [0], [0]]
-        elif key == ord('b'):
-            needleComposeTvec = needleComposeTvec + [[0], [-0.001], [0]]
-        elif key == ord('f'):
-            needleComposeTvec = needleComposeTvec + [[0], [0.001], [0]]
-        elif key == ord('p'):
-            print("composed vector to print")
-            print(needleComposeTvec)
-            print("calculated vector to print")
-            print(savedNeedleTvec)
+                if isNeedleDetected and isCalibrationMarkerDetected and behaviour == 1:
+                    needleComposeRvec, needleComposeTvec = relativePosition(calibrationRvec, calibrationTvec, needleRvec, needleTvec)
+                    savedNeedleRvec, savedNeedleTvec = needleComposeRvec, needleComposeTvec
+                elif isUltraSoundDetected and isCalibrationMarkerDetected and behaviour == 2:
+                    ultraSoundComposeRvec, ultraSoundComposeTvec = relativePosition(calibrationRvec, calibrationTvec, ultraSoundRvec, ultraSoundTvec)
+                    savedUltraSoundRvec, savedUltraSoundTvec = ultraSoundComposeRvec, ultraSoundComposeTvec
+        elif key == ord('u'):  # Up
+            if behaviour == 1 and needleComposeTvec is not None:
+                needleComposeTvec = needleComposeTvec + [[0], [0], [0.001]]
+            elif behaviour == 2 and ultraSoundComposeTvec is not None:
+                ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [0], [0.001]]
+        elif key == ord('d'):  # Down
+            if behaviour == 1 and needleComposeTvec is not None:
+                needleComposeTvec = needleComposeTvec + [[0], [0], [-0.001]]
+            elif behaviour == 2 and ultraSoundComposeTvec is not None:
+                ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [0], [-0.001]]
+        elif key == ord('r'):  # Right
+            if behaviour == 1 and needleComposeTvec is not None:
+                needleComposeTvec = needleComposeTvec + [[0.001], [0], [0]]
+            elif behaviour == 2 and ultraSoundComposeTvec is not None:
+                ultraSoundComposeTvec = ultraSoundComposeTvec + [[0.001], [0], [0]]
+        elif key == ord('l'):  # Left
+            if behaviour == 1 and needleComposeTvec is not None:
+                needleComposeTvec = needleComposeTvec + [[-0.001], [0], [0]]
+            elif behaviour == 2 and ultraSoundComposeTvec is not None:
+                ultraSoundComposeTvec = ultraSoundComposeTvec + [[-0.001], [0], [0]]
+        elif key == ord('b'):  # Back
+            if behaviour == 1 and needleComposeTvec is not None:
+                needleComposeTvec = needleComposeTvec + [[0], [-0.001], [0]]
+            elif behaviour == 2 and ultraSoundComposeTvec is not None:
+                ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [-0.001], [0]]
+        elif key == ord('f'):  # Front
+            if behaviour == 1 and needleComposeTvec is not None:
+                needleComposeTvec = needleComposeTvec + [[0], [0.001], [0]]
+            elif behaviour == 2 and ultraSoundComposeTvec is not None:
+                ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [0.001], [0]]
+        elif key == ord('p'):  # print necessary information here
+            pass  # Insert necessary print here
 
     # When everything done, release the capture
     cap.release()
@@ -210,9 +245,13 @@ if __name__ == '__main__':
                         help='Marker ID for the calibration marker')
     parser.add_argument('--needleMarker', metavar='int', required=True,
                         help='Marker ID for the needle\'s marker')
+    parser.add_argument('--ultrasoundMarker', metavar='int', required=True,
+                        help='Marker ID for the needle\'s marker')
+
     args = parser.parse_args()
     calibrationMarkerID = int(args.calibrationMarker)
     needleMarkerID = int(args.needleMarker)
+    ultraSoundMarkerID = int(args.ultrasoundMarker)
     if args.coefficients == '1':
         mtx, dist = loadCoefficients("calib_images/calibrationCoefficients.yaml")
         ret = True
