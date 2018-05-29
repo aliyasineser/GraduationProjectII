@@ -9,9 +9,9 @@ calibrationMarkerID = None
 needleMarkerID = None
 ultraSoundMarkerID = None
 
-
-
 cap = cv2.VideoCapture(1)
+image_width = 0
+image_height = 0
 
 # termination criteria
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
@@ -91,6 +91,35 @@ def inversePerspective(rvec, tvec):
     return invRvec, invTvec
 
 
+def make_1080p():
+    global image_width
+    global image_height
+    image_width = 1920
+    image_height = 1080
+    change_res(image_width, image_height)
+
+
+def make_720p():
+    global image_width
+    global image_height
+    image_width = 1280
+    image_height = 720
+    change_res(image_width, image_height)
+
+
+def make_480p():
+    global image_width
+    global image_height
+    image_width = 640
+    image_height = 480
+    change_res(image_width, image_height)
+
+
+def change_res(width, height):
+    cap.set(3, width)
+    cap.set(4, height)
+
+
 def relativePosition(rvec1, tvec1, rvec2, tvec2):
     """ Get relative position for rvec2 & tvec2. Compose the returned rvec & tvec to use composeRT with rvec2 & tvec2 """
     rvec1, tvec1 = rvec1.reshape((3, 1)), tvec1.reshape((3, 1))
@@ -117,17 +146,24 @@ def draw(img, imgpts, color):
 
 
 def track(matrix_coefficients, distortion_coefficients):
+    global image_width
+    global image_height
     """ Real time ArUco marker tracking.  """
     needleComposeRvec, needleComposeTvec = None, None  # Composed for needle
     ultraSoundComposeRvec, ultraSoundComposeTvec = None, None  # Composed for ultrasound
     savedNeedleRvec, savedNeedleTvec = None, None  # Pure Composed
     savedUltraSoundRvec, savedUltraSoundTvec = None, None  # Pure Composed
+    TcomposedRvecNeedle, TcomposedTvecNeedle = None, None
+    TcomposedRvecUltrasound, TcomposedTvecUltrasound = None, None
+
     # Behaviour is a key between calibration types.
     # No simulation is equal to 0
     # Needle Calibration is equal to 1
     # Ultrasound Calibration is equal to 2
     # Press
     behaviour = 0
+    make_480p()
+
     while True:
         isCalibrationMarkerDetected = False
         isNeedleDetected = False
@@ -146,27 +182,26 @@ def track(matrix_coefficients, distortion_coefficients):
 
         if behaviour == 0:
             font = cv2.FONT_HERSHEY_SIMPLEX
-            cv2.putText(frame, 'No Calibration', (10, 40), font, 1, (180, 250, 199), 2, cv2.LINE_AA)
+            cv2.putText(frame, 'No Calibration', (10, 40), font, 0.7, (180, 250, 199), 2, cv2.LINE_AA)
         elif behaviour == 1:
             font = cv2.FONT_HERSHEY_SIMPLEX
-            cv2.putText(frame, 'Needle calibration', (10, 40), font, 1, (180, 250, 199), 2, cv2.LINE_AA)
+            cv2.putText(frame, 'Needle calibration', (10, 40), font, 0.7, (180, 250, 199), 2, cv2.LINE_AA)
         else:
             font = cv2.FONT_HERSHEY_SIMPLEX
-            cv2.putText(frame, 'Ultrasound calibration', (10, 40), font, 1, (180, 250, 199), 2, cv2.LINE_AA)
+            cv2.putText(frame, 'Ultrasound calibration', (10, 40), font, 0.7, (180, 250, 199), 2, cv2.LINE_AA)
             pass
+
+
 
         if np.all(ids is not None):  # If there are markers found by detector
             zipped = zip(ids, corners)
             ids, corners = zip(*(sorted(zipped)))
-            axisForFourPoints = np.float32([[-0.035, -0.035, 0], [-0.035, 0.035, 0], [0.035, -0.035, 0], [0.035, 0.035, 0]]).reshape(-1, 3)  # axis for a plane
+            axisForFourPoints = np.float32([[-0.025, -0.025, 0], [-0.025, 0.025, 0], [0.025, -0.025, 0], [0.025, 0.025, 0]]).reshape(-1, 3)  # axis for a plane
             axisForTwoPoints = np.float32([[0.01, 0.01, 0], [-0.01, 0.01, 0]]).reshape(-1, 3)  # axis for a line
             for i in range(0, len(ids)):  # Iterate in markers
                 # Estimate pose of each marker and return the values rvec and tvec---different from camera coefficients
                 rvec, tvec, markerPoints = aruco.estimatePoseSingleMarkers(corners[i], 0.02, matrix_coefficients,
                                                                            distortion_coefficients)
-                # print(ids)
-
-
 
                 if ids[i] == calibrationMarkerID:
                     calibrationRvec = rvec
@@ -185,24 +220,35 @@ def track(matrix_coefficients, distortion_coefficients):
                     ultrasoundCorners = corners[i]
 
                 (rvec - tvec).any()  # get rid of that nasty numpy value array error
-                aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
+                # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
                 aruco.drawDetectedMarkers(frame, corners)  # Draw A square around the markers
 
             if isNeedleDetected and needleComposeRvec is not None and needleComposeTvec is not None:
                 info = cv2.composeRT(needleComposeRvec, needleComposeTvec, needleRvec.T, needleTvec.T)
-                TcomposedRvec, TcomposedTvec = info[0], info[1]
-                imgpts, jac = cv2.projectPoints(axisForTwoPoints, TcomposedRvec, TcomposedTvec, matrix_coefficients,
+                TcomposedRvecNeedle, TcomposedTvecNeedle = info[0], info[1]
+                imgpts, jac = cv2.projectPoints(axisForTwoPoints, TcomposedRvecNeedle, TcomposedTvecNeedle, matrix_coefficients,
                                                 distortion_coefficients)
                 frame = draw(frame, imgpts, (200, 200, 220))
 
             if isUltraSoundDetected and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None:
                 info = cv2.composeRT(ultraSoundComposeRvec, ultraSoundComposeTvec, ultraSoundRvec.T, ultraSoundTvec.T)
-                TcomposedRvec, TcomposedTvec = info[0], info[1]
-                imgpts, jac = cv2.projectPoints(axisForFourPoints, TcomposedRvec, TcomposedTvec, matrix_coefficients,
+                TcomposedRvecUltrasound, TcomposedTvecUltrasound = info[0], info[1]
+                imgpts, jac = cv2.projectPoints(axisForTwoPoints, TcomposedRvecUltrasound, TcomposedTvecUltrasound, matrix_coefficients,
                                                 distortion_coefficients)
                 frame = draw(frame, imgpts, (60, 200, 50))
 
+
+
+            if isNeedleDetected and needleComposeRvec is not None and needleComposeTvec is not None and \
+                isUltraSoundDetected and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None:
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                cv2.putText(frame, 'X difference:'+str(TcomposedTvecNeedle[0] - TcomposedTvecUltrasound[0]), (10, 70), font, 0.7, (0, 0, 200), 2, cv2.LINE_AA)
+                cv2.putText(frame, 'y difference:'+str(TcomposedTvecNeedle[1] - TcomposedTvecUltrasound[1]), (10, 100), font, 0.7, (0, 200, 0), 2, cv2.LINE_AA)
+                cv2.putText(frame, 'z difference:'+str(TcomposedTvecNeedle[2] - TcomposedTvecUltrasound[2]), (10, 130), font, 0.7, (200, 0, 0), 2, cv2.LINE_AA)
+
         # Display the resulting frame
+        cv2.namedWindow('frame', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('frame', image_width, image_height)
         cv2.imshow('frame', frame)
         # Wait 3 milisecoonds for an interaction. Check the key and do the corresponding job.
         key = cv2.waitKey(3) & 0xFF
