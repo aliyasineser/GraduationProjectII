@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QDialog, QLabel, QVBoxLayout,
 from aruco_tracker import relativePosition, draw, calibrate, saveCoefficients, loadCoefficients
 import cv2
 import cv2.aruco as aruco
+import pickle
 
 cap = cv2.VideoCapture(1)
 
@@ -16,7 +17,10 @@ ultraSoundMarkerID = None
 
 mtx, dist = None, None  # Camera parameters
 pressedKey = None
+save_Name = "savedCalibration.pkl"  # File to store calibration info
 
+needleComposeRvec, needleComposeTvec = None, None  # Composed for needle
+ultraSoundComposeRvec, ultraSoundComposeTvec = None, None  # Composed for ultrasound
 
 class Thread(QThread):
     changePixmap = pyqtSignal(QImage)
@@ -29,10 +33,8 @@ class Thread(QThread):
         self.track(mtx, dist)
 
     def track(self, matrix_coefficients, distortion_coefficients):
-        global pressedKey
+        global pressedKey, needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec
         """ Real time ArUco marker tracking.  """
-        needleComposeRvec, needleComposeTvec = None, None  # Composed for needle
-        ultraSoundComposeRvec, ultraSoundComposeTvec = None, None  # Composed for ultrasound
         savedNeedleRvec, savedNeedleTvec = None, None  # Pure Composed
         savedUltraSoundRvec, savedUltraSoundTvec = None, None  # Pure Composed
         TcomposedRvecNeedle, TcomposedTvecNeedle = None, None
@@ -98,7 +100,7 @@ class Thread(QThread):
                             ultrasoundCorners = corners[i]
 
                         (rvec - tvec).any()  # get rid of that nasty numpy value array error
-                        # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)  # Draw Axis
+                        # aruco.drawAxis(frame, matrix_coefficients, distortion_coefficients, rvec, tvec, 0.01)
                         frame = aruco.drawDetectedMarkers(frame, corners)  # Draw A square around the markers
 
                     if isNeedleDetected and needleComposeRvec is not None and needleComposeTvec is not None:
@@ -117,13 +119,12 @@ class Thread(QThread):
 
                     if isNeedleDetected and needleComposeRvec is not None and needleComposeTvec is not None and \
                         isUltraSoundDetected and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None:
-                        self.changeXDiff.emit(
-                            'X difference:' + str(TcomposedTvecNeedle[0] - TcomposedTvecUltrasound[0]))
-                        self.changeYDiff.emit(
-                            'X difference:' + str(TcomposedTvecNeedle[0] - TcomposedTvecUltrasound[0]))
-                        self.changeZDiff.emit(
-                            'X difference:' + str(TcomposedTvecNeedle[0] - TcomposedTvecUltrasound[0]))
-
+                        xdiff = round((TcomposedTvecNeedle[0] - TcomposedTvecUltrasound[0])[0], 3)
+                        ydiff = round((TcomposedTvecNeedle[1] - TcomposedTvecUltrasound[1])[0], 3)
+                        zdiff = round((TcomposedTvecNeedle[2] - TcomposedTvecUltrasound[2])[0], 3)
+                        self.changeXDiff.emit('X difference:' + str(xdiff))
+                        self.changeYDiff.emit('Y difference:' + str(ydiff))
+                        self.changeZDiff.emit('Z difference:' + str(zdiff))
 
 
                 # Display the resulting frame
@@ -178,6 +179,13 @@ class Thread(QThread):
                         ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [0.001], [0]]
                 elif pressedKey == Qt.Key_P:  # print necessary information here
                     pass  # Insert necessary print here
+                elif pressedKey == Qt.Key_S:  # print necessary information here
+                    if(needleComposeRvec is not None and needleComposeTvec is not None and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None):
+                        print(needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec)
+                        fileObject = open(save_Name, 'wb')
+                        data = [needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec]
+                        pickle.dump(data, fileObject)
+                        fileObject.close()
                 elif pressedKey == Qt.Key_X:  # change simulation type
                     behaviour = (behaviour + 1) % 3
                     print(behaviour)
@@ -199,8 +207,8 @@ class App(QWidget):
         self.title = "Augmented Biopsy"
         self.left = 40
         self.top = 40
-        self.width = 800
-        self.height = 600
+        self.width = 1024
+        self.height = 768
         self.initUI()
 
     @pyqtSlot(QImage)
@@ -261,7 +269,7 @@ class App(QWidget):
         displayVbox.addWidget(self.calibrationType)
         displayVbox.addWidget(self.xDifflabel)
         displayVbox.addWidget(self.yDifflabel)
-        # displayVbox.addWidget(self.run_button)
+        displayVbox.addWidget(self.zDifflabel)
 
         self.setLayout(displayVbox)
 
@@ -274,11 +282,6 @@ class App(QWidget):
         th.start()
         return
 
-
-''' Calibration Functions '''
-def calibrate():
-    print("haburaya uyy")
-    pass
 
 
 ''' Main Function '''
@@ -293,12 +296,18 @@ if __name__ == '__main__':
                         help='Marker ID for the needle\'s marker')
     parser.add_argument('--ultrasoundMarker', metavar='int', required=True,
                         help='Marker ID for the needle\'s marker')
+    parser.add_argument('--savedCalibration', metavar='int', required=False,
+                        help='Calibration saves')
 
     args = parser.parse_args()
     calibrationMarkerID = int(args.calibrationMarker)
     needleMarkerID = int(args.needleMarker)
     ultraSoundMarkerID = int(args.ultrasoundMarker)
-
+    if args.savedCalibration == '1':
+        fileObject = open(save_Name, 'rb')
+        saved = pickle.load(fileObject)
+        needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec = saved
+        fileObject.close()
 
     if args.coefficients == '1':
         mtx, dist = loadCoefficients("calib_images/calibrationCoefficients.yaml")
