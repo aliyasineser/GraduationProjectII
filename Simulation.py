@@ -23,25 +23,23 @@ needleComposeRvec, needleComposeTvec = None, None  # Composed for needle
 ultraSoundComposeRvec, ultraSoundComposeTvec = None, None  # Composed for ultrasound
 
 class Thread(QThread):
+    # Slots for the gui
     changePixmap = pyqtSignal(QImage)
     changeXDiff = pyqtSignal(str)
     changeYDiff = pyqtSignal(str)
     changeZDiff = pyqtSignal(str)
     calibrationType = pyqtSignal(str)
 
+    # Thread function
     def run(self):
         self.track(mtx, dist)
 
+    # Does all the tracking and updates the gui with slots
     def track(self, matrix_coefficients, distortion_coefficients):
         global pressedKey, needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec
         """ Real time ArUco marker tracking.  """
-        savedNeedleRvec, savedNeedleTvec = None, None  # Pure Composed
-        savedUltraSoundRvec, savedUltraSoundTvec = None, None  # Pure Composed
         TcomposedRvecNeedle, TcomposedTvecNeedle = None, None
         TcomposedRvecUltrasound, TcomposedTvecUltrasound = None, None
-
-        # termination criteria
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
         # Behaviour is a key between calibration types.
         # No simulation is equal to 0
@@ -51,9 +49,12 @@ class Thread(QThread):
         behaviour = 0
         try:
             while True:
+                # No marker detected
                 isCalibrationMarkerDetected = False
                 isNeedleDetected = False
                 isUltraSoundDetected = False
+
+                # Get the next frame to process
                 ret, frame = cap.read()
                 # operations on the frame come here
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Change grayscale
@@ -66,6 +67,7 @@ class Thread(QThread):
                                                                         cameraMatrix=matrix_coefficients,
                                                                         distCoeff=distortion_coefficients)
 
+                # Get the behaviour and update the gui
                 if behaviour == 0:
                     self.calibrationType.emit('Simulation')
                 elif behaviour == 1:
@@ -75,13 +77,19 @@ class Thread(QThread):
                     pass
 
                 if np.all(ids is not None):  # If there are markers found by detector
+                    # sort the markers
                     zipped = zip(ids, corners)
                     ids, corners = zip(*(sorted(zipped)))
-                    axisForTwoPoints = np.float32([[0.01, 0.01, 0], [-0.01, 0.01, 0]]).reshape(-1, 3)  # axis for a line
+                    # 4 axis for ultrasound, 2axis for needle
+                    axisForFourPoints = np.float32(
+                        [[-0.02, -0.02, 0], [-0.02, 0.02, 0], [0.02, -0.02, 0], [0.02, 0.02, 0]]).reshape(-1,3)  # axis for a plan
+                    axisForTwoPoints = np.float32([[0.01, 0, 0], [-0.01, 0, 0]]).reshape(-1, 3)  # axis for a line
+
                     for i in range(0, len(ids)):  # Iterate in markers
                         # Estimate pose of each marker and return the values rvec and tvec---different from camera coefficients
                         rvec, tvec, markerPoints = aruco.estimatePoseSingleMarkers(corners[i], 0.02, matrix_coefficients,
                                                                                    distortion_coefficients)
+
 
                         if ids[i] == calibrationMarkerID:
                             calibrationRvec = rvec
@@ -113,10 +121,12 @@ class Thread(QThread):
                     if isUltraSoundDetected and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None:
                         info = cv2.composeRT(ultraSoundComposeRvec, ultraSoundComposeTvec, ultraSoundRvec.T, ultraSoundTvec.T)
                         TcomposedRvecUltrasound, TcomposedTvecUltrasound = info[0], info[1]
-                        imgpts, jac = cv2.projectPoints(axisForTwoPoints, TcomposedRvecUltrasound, TcomposedTvecUltrasound, matrix_coefficients,
+                        imgpts, jac = cv2.projectPoints(axisForFourPoints, TcomposedRvecUltrasound, TcomposedTvecUltrasound, matrix_coefficients,
                                                         distortion_coefficients)
                         frame = draw(frame, imgpts, (60, 200, 50))
 
+                    # If the both markers can be seen by the camera, print the xyz differences between them
+                    # So it will guide the user
                     if isNeedleDetected and needleComposeRvec is not None and needleComposeTvec is not None and \
                         isUltraSoundDetected and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None:
                         xdiff = round((TcomposedTvecNeedle[0] - TcomposedTvecUltrasound[0])[0], 3)
@@ -133,9 +143,10 @@ class Thread(QThread):
                 p = convertToQtFormat.scaled(640, 480, Qt.KeepAspectRatio)
                 self.changePixmap.emit(p)
 
-                if pressedKey is None:
+                # Key handling. For marker calibration, saving marker etc.
+                if pressedKey is None:  # No key pressed
                     pass
-                elif pressedKey == Qt.Key_C:
+                elif pressedKey == Qt.Key_C:  # Button for calibration.
                     if ids is not None and len(ids) > 1:  # If there are two markers, reverse the second and get the difference
                         if isNeedleDetected and isCalibrationMarkerDetected and behaviour == 1:
                             needleComposeRvec, needleComposeTvec = relativePosition(calibrationRvec, calibrationTvec,
@@ -147,46 +158,46 @@ class Thread(QThread):
                                                                                             ultraSoundRvec,
                                                                                             ultraSoundTvec)
                             savedUltraSoundRvec, savedUltraSoundTvec = ultraSoundComposeRvec, ultraSoundComposeTvec
-                elif pressedKey == Qt.Key_U:
+                elif pressedKey == Qt.Key_U:  # Button for moving z axis 1 mm
                     if behaviour == 1 and needleComposeTvec is not None:
                         needleComposeTvec = needleComposeTvec + [[0], [0], [0.001]]
                     elif behaviour == 2 and ultraSoundComposeTvec is not None:
                         ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [0], [0.001]]
-                elif pressedKey == Qt.Key_D:  # Down
+                elif pressedKey == Qt.Key_D:  # Button for moving z axis -1 mm
                     if behaviour == 1 and needleComposeTvec is not None:
                         needleComposeTvec = needleComposeTvec + [[0], [0], [-0.001]]
                     elif behaviour == 2 and ultraSoundComposeTvec is not None:
                         ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [0], [-0.001]]
-                elif pressedKey == Qt.Key_R:  # Right
+                elif pressedKey == Qt.Key_R:  # Button for moving x axis 1 mm
                     if behaviour == 1 and needleComposeTvec is not None:
                         needleComposeTvec = needleComposeTvec + [[0.001], [0], [0]]
                     elif behaviour == 2 and ultraSoundComposeTvec is not None:
                         ultraSoundComposeTvec = ultraSoundComposeTvec + [[0.001], [0], [0]]
-                elif pressedKey == Qt.Key_L:  # Left
+                elif pressedKey == Qt.Key_L:  # Button for moving x axis -1 mm
                     if behaviour == 1 and needleComposeTvec is not None:
                         needleComposeTvec = needleComposeTvec + [[-0.001], [0], [0]]
                     elif behaviour == 2 and ultraSoundComposeTvec is not None:
                         ultraSoundComposeTvec = ultraSoundComposeTvec + [[-0.001], [0], [0]]
-                elif pressedKey == Qt.Key_B:  # Back
+                elif pressedKey == Qt.Key_B:  # Button for moving y axis -1 mm
                     if behaviour == 1 and needleComposeTvec is not None:
                         needleComposeTvec = needleComposeTvec + [[0], [-0.001], [0]]
                     elif behaviour == 2 and ultraSoundComposeTvec is not None:
                         ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [-0.001], [0]]
-                elif pressedKey == Qt.Key_F:  # Front
+                elif pressedKey == Qt.Key_F:  # Button for moving y axis 1 mm
                     if behaviour == 1 and needleComposeTvec is not None:
                         needleComposeTvec = needleComposeTvec + [[0], [0.001], [0]]
                     elif behaviour == 2 and ultraSoundComposeTvec is not None:
                         ultraSoundComposeTvec = ultraSoundComposeTvec + [[0], [0.001], [0]]
-                elif pressedKey == Qt.Key_P:  # print necessary information here
+                elif pressedKey == Qt.Key_P:  # print necessary information here, for debug
                     pass  # Insert necessary print here
-                elif pressedKey == Qt.Key_S:  # print necessary information here
+                elif pressedKey == Qt.Key_S:  # Save the calibration vectors to a file.
                     if(needleComposeRvec is not None and needleComposeTvec is not None and ultraSoundComposeRvec is not None and ultraSoundComposeTvec is not None):
                         print(needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec)
                         fileObject = open(save_Name, 'wb')
                         data = [needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec]
                         pickle.dump(data, fileObject)
                         fileObject.close()
-                elif pressedKey == Qt.Key_X:  # change simulation type
+                elif pressedKey == Qt.Key_X:  # change simulation type, "Simulation, needle calibration, ultrasound calibration"
                     behaviour = (behaviour + 1) % 3
                     print(behaviour)
                 pressedKey = None
@@ -205,32 +216,40 @@ class App(QWidget):
     def __init__(self):
         super().__init__()
         self.title = "Augmented Biopsy"
+        # Start points and the resolution
         self.left = 40
         self.top = 40
         self.width = 1024
         self.height = 768
+
         self.initUI()
 
+    # slot for setting the image.
     @pyqtSlot(QImage)
     def setImage(self, image):
         self.streamLabel.setPixmap(QPixmap.fromImage(image))
 
+    # slot for the label that shows which type is on. Simulation, needle calibration, ultrasound calibration.
     @pyqtSlot(str)
     def setCalibrationTypeLabel(self, labelText):
         self.calibrationType.setText(labelText)
 
+    # slot for x diff label.
     @pyqtSlot(str)
     def setXDiffLabel(self, labelText):
         self.xDifflabel.setText(labelText)
 
+    # slot for y diff label.
     @pyqtSlot(str)
     def setYDiffLabel(self, labelText):
         self.yDifflabel.setText(labelText)
 
+    # slot for z diff label.
     @pyqtSlot(str)
     def setZDiffLabel(self, labelText):
         self.zDifflabel.setText(labelText)
 
+    # Key press event to get the keys.
     def keyPressEvent(self, event):
         global pressedKey
         pressedKey = event.key()
@@ -299,29 +318,33 @@ if __name__ == '__main__':
     parser.add_argument('--savedCalibration', metavar='int', required=False,
                         help='Calibration saves')
 
+    # Parse the arguments and take action for that.
     args = parser.parse_args()
     calibrationMarkerID = int(args.calibrationMarker)
     needleMarkerID = int(args.needleMarker)
     ultraSoundMarkerID = int(args.ultrasoundMarker)
+
+    # If marker calibration is already done and saved, you can load it.
     if args.savedCalibration == '1':
         fileObject = open(save_Name, 'rb')
         saved = pickle.load(fileObject)
         needleComposeRvec, needleComposeTvec, ultraSoundComposeRvec, ultraSoundComposeTvec = saved
         fileObject.close()
-
+    # If camera calibration is done and saved, you can load it.
     if args.coefficients == '1':
         mtx, dist = loadCoefficients("calib_images/calibrationCoefficients.yaml")
         ret = True
-    else:
+    else:  # No calibration, use "calib_images" as directory.
         ret, mtx, dist, rvecs, tvecs = calibrate("calib_images")
         saveCoefficients(mtx, dist, "calib_images/calibrationCoefficients.yaml")
     print("Calibration is completed. Starting tracking sequence.")
+    # If everything is okay, we can init the gui and start the stream.
     if ret:
         app = QApplication(sys.argv)
         main_window = QMainWindow()
         widget = App()
-
         widget.show()
         app.exec_()
+        # Release the camera
         cap.release()
         cv2.destroyAllWindows()

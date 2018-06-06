@@ -314,10 +314,12 @@ if __name__ == '__main__':
     parser.add_argument('--ultrasoundMarker', metavar='int', required=True,
                         help='Marker ID for the needle\'s marker')
 
+    # Parse the arguments and take action for that.
     args = parser.parse_args()
     calibrationMarkerID = int(args.calibrationMarker)
     needleMarkerID = int(args.needleMarker)
     ultraSoundMarkerID = int(args.ultrasoundMarker)
+
     if args.coefficients == '1':
         mtx, dist = loadCoefficients("calib_images/calibrationCoefficients.yaml")
         ret = True
