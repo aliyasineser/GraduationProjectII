@@ -9,7 +9,7 @@ import cv2
 import cv2.aruco as aruco
 import pickle
 
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 calibrationMarkerID = None
 needleMarkerID = None
@@ -199,7 +199,7 @@ class Thread(QThread):
                         fileObject.close()
                 elif pressedKey == Qt.Key_X:  # change simulation type, "Simulation, needle calibration, ultrasound calibration"
                     behaviour = (behaviour + 1) % 3
-                    print(behaviour)
+                    # print(behaviour)
                 pressedKey = None
 
         except Exception:

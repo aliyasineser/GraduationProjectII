@@ -4,7 +4,7 @@ import cv2.aruco as aruco
 import glob
 import argparse
 
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 # termination criteria
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
